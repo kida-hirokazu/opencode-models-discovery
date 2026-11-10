@@ -214,7 +214,7 @@ OpenCode v2 uses `providers` and represents model variants as an array of entrie
     "gateway": {
       "models": {
         "example-model": {
-          "options": {
+          "settings": {
             "customRouting": true
           },
           "variants": [
@@ -264,25 +264,30 @@ If `example-model` was discovered with a name, limits, modalities, and capabilit
 
 #### Model overrides for reasoning metadata (OpenCode v2)
 
-OpenCode v2 stores plugin-managed model overrides in host storage under `overrides:<providerID>:<modelID>`. They are edited from `/models-discovery-console`, are applied after discovery, and survive refreshes and cache clears. No extra `modelsDiscovery` option is required.
+OpenCode v2 stores plugin-managed model overrides in host storage under `overrides:<providerID>:<modelID>`. They are edited from `/models-discovery-console`, are applied to the plugin's discovery inventory, and survive refreshes and cache clears. No extra `modelsDiscovery` option is required. Console details describe that inventory, not the host's final resolved model.
 
 Use an override when a provider's model list has no reasoning metadata but the model is known to support thinking. Open **Edit override** and set the fields explicitly:
 
-- **Reasoning support** sets `reasoning: true`.
-- **Reasoning efforts** sets `variants` from a comma-separated list such as `low, high, max`. Each entry becomes `{ "id": "<effort>", "settings": { "reasoningEffort": "<effort>" } }`.
+- **Reasoning metadata (plugin only)** sets the plugin's `reasoning` flag for discovery display. It does not enable or disable thinking in OpenCode.
+- **Attachment metadata (plugin only)** similarly changes only the plugin's `attachment` flag, not OpenCode's accepted input modalities.
+- **Reasoning efforts** sets `variants` from a comma-separated list such as `low, high, max`. A new ID becomes `{ "id": "<effort>", "settings": { "reasoningEffort": "<effort>" } }`. Existing IDs retain their complete variant definitions, including custom settings, body, and headers. Omitting an ID removes that variant; an empty list removes all variants. Unchanged input is not saved, so it cannot overwrite existing definitions or create an unnecessary override.
 - **Reasoning field** sets `compatibility.reasoningField` when a provider streams reasoning under a non-default delta key.
 
-Nothing is derived from the model name, and the plugin does not invent efforts. `max` and similar tiers exist only when listed in **Reasoning efforts**. An upstream accepting `reasoning_effort: "max"` without an HTTP error is not proof that it applies the effort, so verify behavior before relying on it.
+The editor does not derive efforts from the model name. New IDs such as `max` are added only when entered; discovered variants may already exist. Select a variant in OpenCode to apply its request settings. Adding a list or setting a plugin-only flag does not itself enable thinking. An upstream accepting `reasoning_effort: "max"` without an HTTP error is not proof that it applies the effort, so verify behavior before relying on it.
 
-The override values replace the corresponding discovered values, including arrays. Omit a field to keep the discovered metadata. When **Reasoning field** is left unset, OpenCode detects the streamed reasoning field itself.
+Override objects are merged into discovered metadata, while arrays replace the corresponding discovered arrays. The editor preserves the entries for retained variant IDs before saving a replacement list. Omit a field to keep the discovered metadata. The existing storage safety rules still reject headers and other sensitive-key fields in override patches; editing a list that retains such data fails rather than silently dropping it. IDs containing spaces or commas also require explicit model configuration for list changes because the effort editor cannot safely represent them. An unchanged save needs no storage write and remains safe even with such fields.
+
+When **Reasoning field** is not overridden, discovered/provider compatibility still applies; if no reasoning field is set at runtime, OpenCode detects it from the stream.
+
+With the installed `@opencode/plugin@2.2.5` runtime schema, top-level `reasoning`, `attachment`, and `options` are removed from `Model.Info`. The plugin retains its flags only as discovery metadata. Runtime request controls use `variants`, `settings`, `body`, `headers`, and `compatibility` instead. The following explicit V2 configuration uses runtime-supported fields:
 
 ```jsonc
 {
+  "$schema": "https://opencode.ai/config.json",
   "providers": {
     "gateway": {
       "models": {
         "example-reasoning-model": {
-          "reasoning": true,
           "variants": [
             { "id": "low", "settings": { "reasoningEffort": "low" } },
             { "id": "high", "settings": { "reasoningEffort": "high" } },
@@ -296,9 +301,9 @@ The override values replace the corresponding discovered values, including array
 }
 ```
 
-The same fields can be set in explicit `providers.<id>.models.<model-id>` configuration; the plugin merges it over discovered and overridden values.
+Existing source models are preserved wholesale when they have the same catalog ID as a discovered model. This includes explicit model definitions and models supplied by earlier provider transforms. Their definitions take precedence over plugin-managed discovery overrides. Models injected by this plugin on a previous reload are different: OpenCode replays transforms on fresh source state, so this plugin's refreshed inventory and stored overrides are used again. Saving a discovery override does not bypass explicit source precedence.
 
-OpenCode validates each model against its own model schema before plugins run. Use documented model fields such as `options` or `variants` for custom values; arbitrary top-level keys are removed by OpenCode and cannot be merged by this plugin. For V2, use the array form shown above; the object-shaped `variants` example is only for the V1 legacy adapter.
+OpenCode normalizes models against its own model schema. Use documented V2 model fields such as `settings` or `variants` for custom values; arbitrary top-level keys are removed by OpenCode and cannot be made effective by this plugin. V1 uses `options` and the legacy object-shaped `variants`; V2 uses the array form shown above. See the [OpenCode models reference](https://opencode.ai/docs/models).
 
 The persisted cache stores only the filtered and enriched discovered base models. It does not store explicit `provider.<name>.models` (V1) or `providers.<name>.models` (V2) configuration, so explicit customizations are applied from the active OpenCode config on every startup. This keeps provider inventory data separate from user configuration.
 

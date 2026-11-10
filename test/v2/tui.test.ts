@@ -507,6 +507,108 @@ describe("V2 TUI Plugin", () => {
   })
 
   describe("Model override editing", () => {
+    it.each([
+      { source: "discovered", id: "Custom.High" },
+      { source: "override", id: "Custom.High" },
+      { source: "discovered", id: "Custom, High" },
+      { source: "override", id: "Custom, High" },
+    ])("does not rewrite unchanged $source variants with ID $id and custom request data", async ({ source, id }) => {
+      const variants = [{
+        id,
+        settings: { reasoningEffort: "high", providerMode: "careful" },
+        body: { thinking: { enabled: true } },
+        ...(source === "discovered" ? { headers: { "x-mode": "thinking" } } : {}),
+      }]
+      const original = structuredClone(variants)
+      const overrideSet = vi.fn()
+      const { ctx, dialogSelect, dialogPrompt, toastShow, getKeymapLayer } = createMockTuiContext({
+        overrideSet,
+        status: vi.fn().mockResolvedValue({
+          providers: [{ id: "hyy", name: "HYY", models: [{
+            id: "model-a", name: "Model A", detail: "",
+            ...(source === "override"
+              ? { override: { patch: { name: "Custom", variants }, enabled: true } }
+              : { defaultValues: { name: "Model A", limit: { context: 1000, output: 100 }, capabilities: { tools: true, input: ["text"], output: ["text"] }, variants } }),
+          }] }],
+        }),
+      })
+      dialogSelect.mockResolvedValueOnce("hyy").mockResolvedValueOnce(0).mockResolvedValueOnce("edit").mockResolvedValueOnce("variants")
+      // Even identifiers outside the effort syntax must survive an unchanged save.
+      dialogPrompt.mockImplementationOnce(async ({ value }) => value)
+      await tuiPlugin.setup(ctx as never)
+      const commands = getKeymapLayer()?.commands as Array<{ id: string; run: (input?: string) => Promise<void> }>
+      await commands.find((command) => command.id === "models-discovery.console")!.run("browse")
+
+      expect(dialogPrompt).toHaveBeenCalledWith(expect.objectContaining({ value: id }))
+      expect(overrideSet).not.toHaveBeenCalled()
+      expect(variants).toEqual(original)
+      expect(toastShow).toHaveBeenCalledWith(expect.objectContaining({ message: "Variants unchanged; nothing saved.", variant: "info" }))
+    })
+
+    it("does not split an existing variant ID containing separators when changing the list", async () => {
+      const overrideSet = vi.fn()
+      const { ctx, dialogSelect, dialogPrompt, dialogAlert, getKeymapLayer } = createMockTuiContext({
+        overrideSet,
+        status: vi.fn().mockResolvedValue({
+          providers: [{ id: "hyy", name: "HYY", models: [{
+            id: "model-a", name: "Model A", detail: "",
+            override: { patch: { variants: [{ id: "Custom, High", settings: { providerMode: "keep" } }] }, enabled: true },
+          }] }],
+        }),
+      })
+      dialogSelect.mockResolvedValueOnce("hyy").mockResolvedValueOnce(0).mockResolvedValueOnce("edit").mockResolvedValueOnce("variants")
+      dialogPrompt.mockResolvedValueOnce("Custom, High, max")
+      await tuiPlugin.setup(ctx as never)
+      const commands = getKeymapLayer()?.commands as Array<{ id: string; run: (input?: string) => Promise<void> }>
+      await commands.find((command) => command.id === "models-discovery.console")!.run("browse")
+      expect(overrideSet).not.toHaveBeenCalled()
+      expect(dialogAlert).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("cannot be safely edited") }))
+    })
+
+    it.each(["discovered", "override"])("preserves retained %s variant definitions when adding or removing IDs", async (source) => {
+      const retained = { id: "High.Custom", settings: { reasoningEffort: "custom", providerMode: "careful" }, body: { thinking: { enabled: true } } }
+      const variants = [retained, { id: "low", settings: { reasoningEffort: "low" } }]
+      const original = structuredClone(variants)
+      const overrideSet = vi.fn().mockResolvedValue({ success: true })
+      const { ctx, dialogSelect, dialogPrompt, getKeymapLayer } = createMockTuiContext({
+        overrideSet,
+        status: vi.fn().mockResolvedValue({
+          providers: [{ id: "hyy", name: "HYY", models: [{
+            id: "model-a", name: "Model A", detail: "",
+            ...(source === "override"
+              ? { override: { patch: { name: "Custom", variants }, enabled: true } }
+              : { defaultValues: { name: "Model A", limit: { context: 1000, output: 100 }, capabilities: { tools: true, input: ["text"], output: ["text"] }, variants } }),
+          }] }],
+        }),
+      })
+      dialogSelect.mockResolvedValueOnce("hyy").mockResolvedValueOnce(0).mockResolvedValueOnce("edit").mockResolvedValueOnce("variants")
+      dialogPrompt.mockResolvedValueOnce("High.Custom, max")
+      await tuiPlugin.setup(ctx as never)
+      const commands = getKeymapLayer()?.commands as Array<{ id: string; run: (input?: string) => Promise<void> }>
+      await commands.find((command) => command.id === "models-discovery.console")!.run("browse")
+
+      expect(overrideSet).toHaveBeenCalledWith({
+        providerID: "hyy", modelID: "model-a", enabled: true,
+        patch: { ...(source === "override" ? { name: "Custom" } : {}), variants: [retained, { id: "max", settings: { reasoningEffort: "max" } }] },
+      }, { location: { directory: "/test/dir" } })
+      expect(variants).toEqual(original)
+    })
+
+    it("labels reasoning and attachment flags as plugin-only metadata", async () => {
+      const { ctx, dialogSelect, getKeymapLayer } = createMockTuiContext()
+      dialogSelect.mockResolvedValueOnce("hyy").mockResolvedValueOnce(0).mockResolvedValueOnce("edit")
+      await tuiPlugin.setup(ctx as never)
+      const commands = getKeymapLayer()?.commands as Array<{ id: string; run: (input?: string) => Promise<void> }>
+      await commands.find((command) => command.id === "models-discovery.console")!.run("browse")
+
+      expect(dialogSelect).toHaveBeenNthCalledWith(4, expect.objectContaining({
+        options: expect.arrayContaining([
+          expect.objectContaining({ value: "reasoning", title: expect.stringContaining("plugin only"), description: expect.stringContaining("Does not enable or disable thinking") }),
+          expect.objectContaining({ value: "attachment", title: expect.stringContaining("plugin only"), description: expect.stringContaining("Does not change") }),
+        ]),
+      }))
+    })
+
     it("saves an explicit reasoning effort list including max", async () => {
       const overrideSet = vi.fn().mockResolvedValue({ success: true })
       const { ctx, dialogSelect, dialogPrompt, toastShow, getKeymapLayer } = createMockTuiContext({ overrideSet })

@@ -61,7 +61,7 @@ For the complete V2 configuration reference, see [Configuration Guide](docs/conf
 
 - `/models-discovery-refresh` refreshes discovered models.
 - `/models-discovery-console` browses providers, models, metadata, and caches.
-- The console can edit per-model overrides, including reasoning support, an explicit reasoning effort list (for example `low, high, max`), and a custom reasoning field. Nothing is inferred from the model name.
+- The console can edit per-model overrides, including an explicit reasoning effort list (for example `low, high, max`) and a custom reasoning field. Reasoning and attachment flags are plugin-only metadata, not OpenCode runtime switches.
 - `models_discovery_refresh` and `models_discovery_status` are available as agent tools.
 - Pass `rawCache: true` to `models_discovery_status` to inspect cached raw models and enrichment results.
 
@@ -146,7 +146,7 @@ See the [full configuration reference](docs/configuration.md) for defaults, filt
 
 ### Filling reasoning metadata for a single model
 
-If a provider's `/v1/models` response omits reasoning metadata, no configuration option is needed: open `/models-discovery-console`, select the provider and model, and choose **Edit override**. Set **Reasoning support**, **Reasoning efforts** (a comma-separated list such as `low, high, max`), and **Reasoning field** explicitly. The plugin only stores what you enter; it does not infer capabilities or efforts from the model name. These settings are per model, are stored in OpenCode host storage, and are not hardcoded to any provider.
+If a provider's `/v1/models` response omits reasoning controls, open `/models-discovery-console`, select the provider and model, and choose **Edit override**. Set **Reasoning efforts** (a comma-separated list such as `low, high, max`) and, if needed, **Reasoning field** explicitly. New effort IDs use `settings.reasoningEffort`; existing IDs retain their settings, body, and headers, and unchanged input is not saved. Select the resulting variant in OpenCode to use its request settings; merely adding variants does not enable thinking. The **Reasoning metadata (plugin only)** and **Attachment metadata (plugin only)** flags affect discovery display only. Overrides are stored per model in OpenCode host storage. Existing source models, including explicit model definitions, take precedence; console details describe plugin discovery metadata rather than the host's resolved model. See the [override reference](docs/configuration.md#model-overrides-for-reasoning-metadata-opencode-v2) for storage restrictions.
 
 ## Documentation
 

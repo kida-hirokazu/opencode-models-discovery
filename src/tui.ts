@@ -4,6 +4,7 @@ import {
   type RpcCacheClearOutput,
   type RpcCacheInspectOutput,
   type RpcModelOverride,
+  type RpcModelValues,
   type RpcRefreshOutput,
   type RpcStatusOutput,
 } from "./v2/rpc.js"
@@ -40,24 +41,14 @@ type OverrideEditContext = {
   readonly client: { rpc(definition: unknown): unknown }
 }
 
-type OverrideModelValues = {
-  readonly name: string
-  readonly limit: { readonly context: number; readonly output: number; readonly input?: number }
-  readonly capabilities: { readonly tools: boolean; readonly input: string[]; readonly output: string[] }
-  readonly reasoning?: boolean
-  readonly attachment?: boolean
-  readonly variants?: readonly { readonly id: string }[]
-  readonly compatibility?: Record<string, unknown>
-}
-
 const REASONING_EFFORT_PATTERN = /^[a-z0-9][a-z0-9_-]*$/i
 const REASONING_FIELD_PATTERN = /^[A-Za-z_][A-Za-z0-9_.-]*$/
 /** OpenAI Chat fields that OpenCode rejects as a reasoning field. */
 const RESERVED_REASONING_FIELDS = new Set(["role", "content", "refusal", "tool_calls"])
 
-function parseReasoningEfforts(raw: string): string[] | undefined {
-  const tokens = raw.split(/[\s,]+/).map((token) => token.trim().toLowerCase()).filter(Boolean)
-  if (tokens.some((token) => !REASONING_EFFORT_PATTERN.test(token))) return undefined
+function parseReasoningEfforts(raw: string, existingIDs: readonly string[]): string[] | undefined {
+  const tokens = raw.split(/[\s,]+/).filter(Boolean).map((token) => existingIDs.includes(token) ? token : token.toLowerCase())
+  if (tokens.some((token) => !existingIDs.includes(token) && !REASONING_EFFORT_PATTERN.test(token))) return undefined
   return [...new Set(tokens)]
 }
 
@@ -66,7 +57,7 @@ async function editModelOverride(
   providerID: string,
   modelID: string,
   existing?: RpcModelOverride,
-  defaults?: OverrideModelValues,
+  defaults?: RpcModelValues,
 ): Promise<void> {
   const current = existing?.patch
   const hasOverride = (field: string): boolean => {
@@ -131,11 +122,11 @@ async function editModelOverride(
       { title: fieldTitle("Context limit", "limit.context"), value: "limit.context" },
       { title: fieldTitle("Output limit", "limit.output"), value: "limit.output" },
       { title: fieldTitle("Input limit", "limit.input"), value: "limit.input" },
-      { title: fieldTitle("Reasoning support", "reasoning"), value: "reasoning" },
+      { title: fieldTitle("Reasoning metadata (plugin only)", "reasoning"), value: "reasoning", description: "Does not enable or disable thinking in OpenCode; use variants for request settings." },
       { title: fieldTitle("Reasoning efforts", "variants"), value: "variants" },
       { title: fieldTitle("Reasoning field", "compatibility.reasoningField"), value: "compatibility.reasoningField" },
       { title: fieldTitle("Tool support", "capabilities.tools"), value: "capabilities.tools" },
-      { title: fieldTitle("Attachment support", "attachment"), value: "attachment" },
+      { title: fieldTitle("Attachment metadata (plugin only)", "attachment"), value: "attachment", description: "Does not change OpenCode's accepted input modalities." },
     ],
   })
   if (!field) return
@@ -157,6 +148,7 @@ async function editModelOverride(
   } else {
     raw = await context.ui.dialog.prompt({
       title: `Set ${field}`,
+      ...(field === "variants" ? { description: "Existing IDs keep their settings, body and headers. Omitted IDs are removed; new IDs use reasoningEffort. Unchanged input is not saved." } : {}),
       value: currentValue === undefined ? undefined : (Array.isArray(currentValue) ? currentValue.join(", ") : String(currentValue)),
       placeholder: field === "name"
         ? "Model display name"
@@ -172,7 +164,18 @@ async function editModelOverride(
   let value: unknown = raw
   if (field === "reasoning" || field === "attachment" || field === "capabilities.tools") value = raw === "true"
   if (field === "variants") {
-    const efforts = parseReasoningEfforts(raw)
+    const existingVariants = Array.isArray(current?.variants) ? current.variants : defaults?.variants ?? []
+    const existingIDs = reasoningEffortIds(existingVariants) ?? []
+    const enteredIDs = raw.split(/[\s,]+/).filter(Boolean)
+    if (raw === existingIDs.join(", ") || (enteredIDs.length === existingIDs.length && enteredIDs.every((id, index) => id === existingIDs[index]))) {
+      context.ui.toast.show({ title: "Models Discovery", message: "Variants unchanged; nothing saved.", variant: "info" })
+      return
+    }
+    if (raw.trim() && existingIDs.some((id) => /[\s,]/.test(id))) {
+      await context.ui.dialog.alert({ title: "Invalid override", message: "Existing variant IDs contain spaces or commas and cannot be safely edited as an effort list. Use explicit model configuration." })
+      return
+    }
+    const efforts = parseReasoningEfforts(raw, existingIDs)
     if (!efforts) {
       await context.ui.dialog.alert({
         title: "Invalid override",
@@ -180,7 +183,10 @@ async function editModelOverride(
       })
       return
     }
-    value = efforts.map((effort) => ({ id: effort, settings: { reasoningEffort: effort } }))
+    value = efforts.map((effort) => {
+      const previous = existingVariants.find((variant) => variant && typeof variant === "object" && variant.id === effort)
+      return previous ? structuredClone(previous) : { id: effort, settings: { reasoningEffort: effort } }
+    })
   }
   if (field === "compatibility.reasoningField") {
     const reasoningField = raw.trim()
@@ -256,7 +262,7 @@ export default defineTuiPlugin({
                     {
                       title: "Browse Models",
                       value: "browse",
-                      description: "Browse providers, models, and resolved model details",
+                      description: "Browse providers, models, and plugin discovery details",
                     },
                     {
                       title: "Cache Operations",
@@ -323,7 +329,7 @@ export default defineTuiPlugin({
                     title: `${provider.id} / ${model.id}`,
                     placeholder: "Choose a model operation",
                     options: [
-                      { title: "View details", value: "details", description: "Show resolved model metadata" },
+                      { title: "View details", value: "details", description: "Show plugin discovery metadata, not the host's resolved model" },
                       { title: "Edit override", value: "edit", description: "Change supported model metadata" },
                       ...(model.override ? [{ title: "Delete override", value: "delete", description: "Restore discovered metadata" }] : []),
                       { title: "← Back to models", value: "back" },

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import plugin from "../../src/v2/index.js"
 import { discoveryCacheKey } from "../../src/core/discovery-cache.js"
 import { DiscoveryRpcDefinition, type RpcCacheClearOutput, type RpcCacheInspectOutput, type RpcStatusOutput, type RpcOverrideListOutput } from "../../src/v2/rpc.js"
+import * as enricherResolver from "../../src/core/enricher-resolver.js"
 
 describe("V2 Cache Operations RPC", () => {
   function createTestSetup(providersList: Array<Record<string, unknown>> = []) {
@@ -319,7 +320,7 @@ describe("V2 Cache Operations RPC", () => {
       }
     })
 
-    it("applies reasoning overrides to the resolved model metadata", async () => {
+    it("applies reasoning overrides to plugin metadata without claiming host resolution", async () => {
       const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue({
         ok: true,
         json: async () => ({ data: [{ id: "model-1" }] }),
@@ -354,9 +355,41 @@ describe("V2 Cache Operations RPC", () => {
 
         const model = (await status({ providerID: "provider-a", details: true })).providers[0]?.models[0]
         expect(model?.detail).toContain("Reasoning: yes")
+        expect(model?.detail).toContain("plugin metadata only; does not enable thinking")
+        expect(model?.detail).toContain("existing source models take precedence")
         expect(model?.detail).toContain("Variants: low, high, max")
         expect(model?.detail).toContain("Reasoning field: reasoning")
       } finally {
+        fetcher.mockRestore()
+      }
+    })
+
+    it("returns complete discovered variants to the editor without projecting away request data", async () => {
+      const variants = [{ id: "high", settings: { reasoningEffort: "high", providerMode: "careful" }, body: { thinking: { enabled: true } }, headers: { "x-mode": "thinking" } }]
+      const enricher = vi.spyOn(enricherResolver, "resolveModelInfoEnricher").mockResolvedValue({ enrich: () => ({ variants }) })
+      const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: [{ id: "model-1", variants }] }),
+      } as Response)
+      const { ctx, rpcHandlers, storageStore } = createTestSetup([{
+        id: "provider-a", name: "Provider A", package: "@opencode/ai/providers/openai-compatible",
+        settings: { baseURL: "http://127.0.0.1:1234/v1", modelsDiscovery: { enabled: true } },
+      }])
+      try {
+        await plugin.setup(ctx as never)
+        const result = await rpcHandlers.status({ details: true }) as RpcStatusOutput
+        expect(result.providers[0]?.models[0]?.defaultValues?.variants).toEqual(variants)
+        // Preserving headers must not relax the existing storage safety policy.
+        await expect(rpcHandlers.overrideSet({
+          providerID: "provider-a", modelID: "model-1", patch: {
+            variants: [...result.providers[0]!.models[0]!.defaultValues!.variants!, { id: "max", settings: { reasoningEffort: "max" } }],
+          },
+        })).rejects.toThrow("patch.variants[0].headers")
+        expect(storageStore.has("overrides:provider-a:model-1")).toBe(false)
+        const unchanged = await rpcHandlers.status({ details: true }) as RpcStatusOutput
+        expect(unchanged.providers[0]?.models[0]?.defaultValues?.variants).toEqual(variants)
+      } finally {
+        enricher.mockRestore()
         fetcher.mockRestore()
       }
     })
