@@ -80,6 +80,112 @@ describe("V2 model overrides", () => {
     })
   })
 
+  it("stores explicit reasoning variants and a reasoning field without generating defaults", () => {
+    const patch = {
+      reasoning: true,
+      variants: [
+        { id: "low", settings: { reasoningEffort: "low" } },
+        { id: "high", settings: { reasoningEffort: "high" } },
+        { id: "max", settings: { reasoningEffort: "max" } },
+      ],
+      compatibility: { reasoningField: "reasoning" },
+    }
+    const result = applyModelOverride({
+      id: "model-1",
+      modelID: "model-1",
+      name: "Discovered",
+      limit: { context: 131072, output: 8192 },
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+    }, {
+      providerID: "provider-a",
+      modelID: "model-1",
+      patch,
+      enabled: true,
+      updatedAt: new Date().toISOString(),
+    })
+
+    expect(result.reasoning).toBe(true)
+    expect(result.variants).toEqual(patch.variants)
+    expect(result.compatibility).toEqual({ reasoningField: "reasoning" })
+  })
+
+  it("does not derive reasoning variants from a reasoning flag alone", () => {
+    const result = applyModelOverride({
+      id: "model-1",
+      modelID: "model-1",
+      name: "Discovered",
+      limit: { context: 131072, output: 8192 },
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+    }, {
+      providerID: "provider-a",
+      modelID: "model-1",
+      patch: { reasoning: true },
+      enabled: true,
+      updatedAt: new Date().toISOString(),
+    })
+
+    expect(result.reasoning).toBe(true)
+    expect(result.variants).toBeUndefined()
+    expect(result.compatibility).toBeUndefined()
+  })
+
+  it("replaces discovered variants with an explicit override list", () => {
+    const result = applyModelOverride({
+      id: "model-1",
+      modelID: "model-1",
+      name: "Discovered",
+      limit: { context: 131072, output: 8192 },
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      variants: [{ id: "medium", settings: { reasoningEffort: "medium" } }],
+    }, {
+      providerID: "provider-a",
+      modelID: "model-1",
+      patch: { variants: [{ id: "max", settings: { reasoningEffort: "max" } }] },
+      enabled: true,
+      updatedAt: new Date().toISOString(),
+    })
+
+    expect(result.variants).toEqual([{ id: "max", settings: { reasoningEffort: "max" } }])
+  })
+
+  it("keeps discovered variants when an override does not set them", () => {
+    const discoveredVariants = [{ id: "low", settings: { reasoningEffort: "low" } }]
+    const result = applyModelOverride({
+      id: "model-1",
+      modelID: "model-1",
+      name: "Discovered",
+      limit: { context: 131072, output: 8192 },
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      variants: discoveredVariants,
+    }, {
+      providerID: "provider-a",
+      modelID: "model-1",
+      patch: { name: "Renamed" },
+      enabled: true,
+      updatedAt: new Date().toISOString(),
+    })
+
+    expect(result.variants).toBe(discoveredVariants)
+  })
+
+  it("accepts max and reasoning fields as override patch fields", async () => {
+    const backend = storage()
+    await expect(setModelOverride(backend, {
+      providerID: "provider-a",
+      modelID: "model-1",
+      patch: {
+        reasoning: true,
+        variants: [{ id: "max", settings: { reasoningEffort: "max" } }],
+        compatibility: { reasoningField: "reasoning" },
+      },
+    })).resolves.toMatchObject({
+      patch: {
+        variants: [{ id: "max", settings: { reasoningEffort: "max" } }],
+        compatibility: { reasoningField: "reasoning" },
+      },
+    })
+  })
+
   it("deletes an existing override and reports whether it existed", async () => {
     const backend = storage()
     await setModelOverride(backend, { providerID: "provider-a", modelID: "model-1", patch: { reasoning: true } })

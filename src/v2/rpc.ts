@@ -6,6 +6,8 @@ export interface RpcModelValues {
   readonly capabilities: { readonly tools: boolean; readonly input: string[]; readonly output: string[] }
   readonly reasoning?: boolean
   readonly attachment?: boolean
+  readonly variants?: readonly { readonly id: string }[]
+  readonly compatibility?: Record<string, unknown>
 }
 
 export interface RpcRefreshInput {

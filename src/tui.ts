@@ -46,6 +46,19 @@ type OverrideModelValues = {
   readonly capabilities: { readonly tools: boolean; readonly input: string[]; readonly output: string[] }
   readonly reasoning?: boolean
   readonly attachment?: boolean
+  readonly variants?: readonly { readonly id: string }[]
+  readonly compatibility?: Record<string, unknown>
+}
+
+const REASONING_EFFORT_PATTERN = /^[a-z0-9][a-z0-9_-]*$/i
+const REASONING_FIELD_PATTERN = /^[A-Za-z_][A-Za-z0-9_.-]*$/
+/** OpenAI Chat fields that OpenCode rejects as a reasoning field. */
+const RESERVED_REASONING_FIELDS = new Set(["role", "content", "refusal", "tool_calls"])
+
+function parseReasoningEfforts(raw: string): string[] | undefined {
+  const tokens = raw.split(/[\s,]+/).map((token) => token.trim().toLowerCase()).filter(Boolean)
+  if (tokens.some((token) => !REASONING_EFFORT_PATTERN.test(token))) return undefined
+  return [...new Set(tokens)]
 }
 
 async function editModelOverride(
@@ -65,7 +78,20 @@ async function editModelOverride(
       const key = field.slice("capabilities.".length)
       return Object.prototype.hasOwnProperty.call(current?.capabilities ?? {}, key)
     }
+    if (field.startsWith("compatibility.")) {
+      const key = field.slice("compatibility.".length)
+      return Object.prototype.hasOwnProperty.call((current?.compatibility as Record<string, unknown> | undefined) ?? {}, key)
+    }
     return Object.prototype.hasOwnProperty.call(current ?? {}, field)
+  }
+
+  const reasoningEffortIds = (variants: unknown): string[] | undefined => {
+    if (!Array.isArray(variants)) return undefined
+    return variants.flatMap((variant) => {
+      if (!variant || typeof variant !== "object") return []
+      const id = (variant as { id?: unknown }).id
+      return typeof id === "string" ? [id] : []
+    })
   }
 
   const valueFor = (field: string): unknown => {
@@ -74,12 +100,21 @@ async function editModelOverride(
       return (current?.limit as Record<string, unknown> | undefined)?.[key] ?? defaults?.limit[key]
     }
     if (field === "capabilities.tools") return (current?.capabilities as Record<string, unknown> | undefined)?.tools ?? defaults?.capabilities.tools
+    if (field === "variants") {
+      return reasoningEffortIds(current?.variants) ?? reasoningEffortIds(defaults?.variants)
+    }
+    if (field === "compatibility.reasoningField") {
+      const currentField = (current?.compatibility as Record<string, unknown> | undefined)?.reasoningField
+      const defaultField = defaults?.compatibility?.reasoningField
+      return typeof currentField === "string" ? currentField : defaultField
+    }
     return current?.[field] ?? defaults?.[field as "name" | "reasoning" | "attachment"]
   }
 
   const displayValue = (field: string): string => {
     const value = valueFor(field)
     if (value === undefined) return "unknown"
+    if (Array.isArray(value)) return value.length > 0 ? value.join(", ") : "none"
     if (typeof value === "boolean") return value ? "on" : "off"
     return String(value)
   }
@@ -97,6 +132,8 @@ async function editModelOverride(
       { title: fieldTitle("Output limit", "limit.output"), value: "limit.output" },
       { title: fieldTitle("Input limit", "limit.input"), value: "limit.input" },
       { title: fieldTitle("Reasoning support", "reasoning"), value: "reasoning" },
+      { title: fieldTitle("Reasoning efforts", "variants"), value: "variants" },
+      { title: fieldTitle("Reasoning field", "compatibility.reasoningField"), value: "compatibility.reasoningField" },
       { title: fieldTitle("Tool support", "capabilities.tools"), value: "capabilities.tools" },
       { title: fieldTitle("Attachment support", "attachment"), value: "attachment" },
     ],
@@ -120,14 +157,42 @@ async function editModelOverride(
   } else {
     raw = await context.ui.dialog.prompt({
       title: `Set ${field}`,
-      value: currentValue === undefined ? undefined : String(currentValue),
-      placeholder: field === "name" ? "Model display name" : "Positive number",
+      value: currentValue === undefined ? undefined : (Array.isArray(currentValue) ? currentValue.join(", ") : String(currentValue)),
+      placeholder: field === "name"
+        ? "Model display name"
+        : field === "variants"
+          ? "Comma-separated efforts, e.g. low, high, max"
+          : field === "compatibility.reasoningField"
+            ? "Streamed reasoning delta field, e.g. reasoning_content"
+            : "Positive number",
     })
     if (raw === undefined) return
   }
 
   let value: unknown = raw
   if (field === "reasoning" || field === "attachment" || field === "capabilities.tools") value = raw === "true"
+  if (field === "variants") {
+    const efforts = parseReasoningEfforts(raw)
+    if (!efforts) {
+      await context.ui.dialog.alert({
+        title: "Invalid override",
+        message: "Reasoning efforts must be comma-separated identifiers such as low, high, max. Leave empty to remove all variants.",
+      })
+      return
+    }
+    value = efforts.map((effort) => ({ id: effort, settings: { reasoningEffort: effort } }))
+  }
+  if (field === "compatibility.reasoningField") {
+    const reasoningField = raw.trim()
+    if (!REASONING_FIELD_PATTERN.test(reasoningField) || RESERVED_REASONING_FIELDS.has(reasoningField)) {
+      await context.ui.dialog.alert({
+        title: "Invalid override",
+        message: "Reasoning field must be a single non-reserved field name such as reasoning_content.",
+      })
+      return
+    }
+    value = reasoningField
+  }
   if (field.startsWith("limit.")) {
     const numericValue = Number(raw)
     value = numericValue
@@ -142,6 +207,8 @@ async function editModelOverride(
     patch.limit = { ...(patch.limit as Record<string, unknown> | undefined), [field.slice("limit.".length)]: value }
   } else if (field.startsWith("capabilities.")) {
     patch.capabilities = { ...(patch.capabilities as Record<string, unknown> | undefined), [field.slice("capabilities.".length)]: value }
+  } else if (field.startsWith("compatibility.")) {
+    patch.compatibility = { ...(patch.compatibility as Record<string, unknown> | undefined), [field.slice("compatibility.".length)]: value }
   } else {
     patch[field] = value
   }

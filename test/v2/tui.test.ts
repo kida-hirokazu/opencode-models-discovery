@@ -505,4 +505,115 @@ describe("V2 TUI Plugin", () => {
       })
     })
   })
+
+  describe("Model override editing", () => {
+    it("saves an explicit reasoning effort list including max", async () => {
+      const overrideSet = vi.fn().mockResolvedValue({ success: true })
+      const { ctx, dialogSelect, dialogPrompt, toastShow, getKeymapLayer } = createMockTuiContext({ overrideSet })
+      dialogSelect
+        .mockResolvedValueOnce("hyy")
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce("edit")
+        .mockResolvedValueOnce("variants")
+        .mockResolvedValueOnce(undefined)
+      dialogPrompt.mockResolvedValueOnce("low, high, max")
+      await tuiPlugin.setup(ctx as never)
+
+      const commands = getKeymapLayer()?.commands as Array<{ id: string; run: (input?: string) => Promise<void> }>
+      await commands.find((command) => command.id === "models-discovery.console")?.run("browse")
+
+      expect(dialogSelect).toHaveBeenNthCalledWith(4, expect.objectContaining({
+        options: expect.arrayContaining([
+          expect.objectContaining({ value: "variants" }),
+          expect.objectContaining({ value: "compatibility.reasoningField" }),
+        ]),
+      }))
+      expect(dialogPrompt).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Set variants",
+        placeholder: "Comma-separated efforts, e.g. low, high, max",
+      }))
+      expect(overrideSet).toHaveBeenCalledWith({
+        providerID: "hyy",
+        modelID: "model-a",
+        patch: {
+          variants: [
+            { id: "low", settings: { reasoningEffort: "low" } },
+            { id: "high", settings: { reasoningEffort: "high" } },
+            { id: "max", settings: { reasoningEffort: "max" } },
+          ],
+        },
+        enabled: true,
+      }, { location: { directory: "/test/dir" } })
+      expect(toastShow).toHaveBeenCalledWith({
+        title: "Models Discovery",
+        message: "Override saved and provider reloaded.",
+        variant: "success",
+      })
+    })
+
+    it("saves a custom reasoning field without touching other compatibility keys", async () => {
+      const overrideSet = vi.fn().mockResolvedValue({ success: true })
+      const { ctx, dialogSelect, dialogPrompt, getKeymapLayer } = createMockTuiContext({ overrideSet })
+      dialogSelect
+        .mockResolvedValueOnce("hyy")
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce("edit")
+        .mockResolvedValueOnce("compatibility.reasoningField")
+        .mockResolvedValueOnce(undefined)
+      dialogPrompt.mockResolvedValueOnce("reasoning")
+      await tuiPlugin.setup(ctx as never)
+
+      const commands = getKeymapLayer()?.commands as Array<{ id: string; run: (input?: string) => Promise<void> }>
+      await commands.find((command) => command.id === "models-discovery.console")?.run("browse")
+
+      expect(overrideSet).toHaveBeenCalledWith({
+        providerID: "hyy",
+        modelID: "model-a",
+        patch: { compatibility: { reasoningField: "reasoning" } },
+        enabled: true,
+      }, { location: { directory: "/test/dir" } })
+    })
+
+    it("rejects invalid reasoning effort input without saving", async () => {
+      const overrideSet = vi.fn().mockResolvedValue({ success: true })
+      const { ctx, dialogSelect, dialogPrompt, dialogAlert, getKeymapLayer } = createMockTuiContext({ overrideSet })
+      dialogSelect
+        .mockResolvedValueOnce("hyy")
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce("edit")
+        .mockResolvedValueOnce("variants")
+        .mockResolvedValueOnce(undefined)
+      dialogPrompt.mockResolvedValueOnce("low, not an effort!")
+      await tuiPlugin.setup(ctx as never)
+
+      const commands = getKeymapLayer()?.commands as Array<{ id: string; run: (input?: string) => Promise<void> }>
+      await commands.find((command) => command.id === "models-discovery.console")?.run("browse")
+
+      expect(overrideSet).not.toHaveBeenCalled()
+      expect(dialogAlert).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Invalid override",
+      }))
+    })
+
+    it("rejects reserved reasoning field names", async () => {
+      const overrideSet = vi.fn().mockResolvedValue({ success: true })
+      const { ctx, dialogSelect, dialogPrompt, dialogAlert, getKeymapLayer } = createMockTuiContext({ overrideSet })
+      dialogSelect
+        .mockResolvedValueOnce("hyy")
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce("edit")
+        .mockResolvedValueOnce("compatibility.reasoningField")
+        .mockResolvedValueOnce(undefined)
+      dialogPrompt.mockResolvedValueOnce("content")
+      await tuiPlugin.setup(ctx as never)
+
+      const commands = getKeymapLayer()?.commands as Array<{ id: string; run: (input?: string) => Promise<void> }>
+      await commands.find((command) => command.id === "models-discovery.console")?.run("browse")
+
+      expect(overrideSet).not.toHaveBeenCalled()
+      expect(dialogAlert).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Invalid override",
+      }))
+    })
+  })
 })

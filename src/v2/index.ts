@@ -276,6 +276,8 @@ export async function setupV2(ctx: Plugin.Context): Promise<() => void> {
                   capabilities: baseline.capabilities,
                   ...(baseline.reasoning !== undefined ? { reasoning: baseline.reasoning } : {}),
                   ...(baseline.attachment !== undefined ? { attachment: baseline.attachment } : {}),
+                  ...(baseline.variants ? { variants: baseline.variants.map((variant) => ({ id: variant.id })) } : {}),
+                  ...(baseline.compatibility ? { compatibility: baseline.compatibility } : {}),
                 } : undefined
               })(),
               detail: [
@@ -298,6 +300,7 @@ export async function setupV2(ctx: Plugin.Context): Promise<() => void> {
                 `  Input: ${model.capabilities.input.join(", ") || "unknown"}`,
                 `  Output: ${model.capabilities.output.join(", ") || "unknown"}`,
                 `  Variants: ${model.variants?.map((variant) => variant.id).join(", ") || "none"}`,
+                `  Reasoning field: ${typeof model.compatibility?.reasoningField === "string" ? model.compatibility.reasoningField : "unknown"}`,
                 ...(overrideByModel.has(`${provider.id}:${model.id}`) || overrideByModel.has(`${provider.id}:${model.modelID}`)
                   ? ["", "Override", `  Updated: ${(overrideByModel.get(`${provider.id}:${model.id}`) ?? overrideByModel.get(`${provider.id}:${model.modelID}`))?.updatedAt ?? "unknown"}`, `  Fields: ${Object.keys((overrideByModel.get(`${provider.id}:${model.id}`) ?? overrideByModel.get(`${provider.id}:${model.modelID}`))?.patch ?? {}).join(", ")}`]
                   : []),

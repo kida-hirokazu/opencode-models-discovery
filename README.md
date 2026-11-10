@@ -61,6 +61,7 @@ For the complete V2 configuration reference, see [Configuration Guide](docs/conf
 
 - `/models-discovery-refresh` refreshes discovered models.
 - `/models-discovery-console` browses providers, models, metadata, and caches.
+- The console can edit per-model overrides, including reasoning support, an explicit reasoning effort list (for example `low, high, max`), and a custom reasoning field. Nothing is inferred from the model name.
 - `models_discovery_refresh` and `models_discovery_status` are available as agent tools.
 - Pass `rawCache: true` to `models_discovery_status` to inspect cached raw models and enrichment results.
 
@@ -142,6 +143,10 @@ Frequently used options:
 | `cache.enabled` | Enable provider model caching; disabled by default |
 
 See the [full configuration reference](docs/configuration.md) for defaults, filter semantics, cache behavior, model assembly, and V1/V2 differences.
+
+### Filling reasoning metadata for a single model
+
+If a provider's `/v1/models` response omits reasoning metadata, no configuration option is needed: open `/models-discovery-console`, select the provider and model, and choose **Edit override**. Set **Reasoning support**, **Reasoning efforts** (a comma-separated list such as `low, high, max`), and **Reasoning field** explicitly. The plugin only stores what you enter; it does not infer capabilities or efforts from the model name. These settings are per model, are stored in OpenCode host storage, and are not hardcoded to any provider.
 
 ## Documentation
 

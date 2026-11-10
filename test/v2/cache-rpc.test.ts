@@ -319,6 +319,48 @@ describe("V2 Cache Operations RPC", () => {
       }
     })
 
+    it("applies reasoning overrides to the resolved model metadata", async () => {
+      const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: [{ id: "model-1" }] }),
+      } as Response)
+      const { ctx, rpcHandlers } = createTestSetup([
+        {
+          id: "provider-a",
+          name: "Provider A",
+          package: "@opencode/ai/providers/openai-compatible",
+          settings: { baseURL: "http://127.0.0.1:1234/v1", modelsDiscovery: { enabled: true } },
+        },
+      ])
+
+      try {
+        await plugin.setup(ctx as never)
+        const set = rpcHandlers.overrideSet as (input: unknown) => Promise<{ success: boolean }>
+        const status = rpcHandlers.status as (input?: unknown) => Promise<RpcStatusOutput>
+
+        await set({
+          providerID: "provider-a",
+          modelID: "model-1",
+          patch: {
+            reasoning: true,
+            variants: [
+              { id: "low", settings: { reasoningEffort: "low" } },
+              { id: "high", settings: { reasoningEffort: "high" } },
+              { id: "max", settings: { reasoningEffort: "max" } },
+            ],
+            compatibility: { reasoningField: "reasoning" },
+          },
+        })
+
+        const model = (await status({ providerID: "provider-a", details: true })).providers[0]?.models[0]
+        expect(model?.detail).toContain("Reasoning: yes")
+        expect(model?.detail).toContain("Variants: low, high, max")
+        expect(model?.detail).toContain("Reasoning field: reasoning")
+      } finally {
+        fetcher.mockRestore()
+      }
+    })
+
     it("restores an override after a second plugin setup using the same storage", async () => {
       const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue({
         ok: true,

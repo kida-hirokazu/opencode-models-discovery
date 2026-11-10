@@ -262,6 +262,42 @@ The following uses the V1 configuration shape. V1 uses `provider` and the legacy
 
 If `example-model` was discovered with a name, limits, modalities, and capability metadata, those fields remain available and the explicit customization is merged on top. `manual-only-model` remains available even if the provider does not return it from its discovery endpoint.
 
+#### Model overrides for reasoning metadata (OpenCode v2)
+
+OpenCode v2 stores plugin-managed model overrides in host storage under `overrides:<providerID>:<modelID>`. They are edited from `/models-discovery-console`, are applied after discovery, and survive refreshes and cache clears. No extra `modelsDiscovery` option is required.
+
+Use an override when a provider's model list has no reasoning metadata but the model is known to support thinking. Open **Edit override** and set the fields explicitly:
+
+- **Reasoning support** sets `reasoning: true`.
+- **Reasoning efforts** sets `variants` from a comma-separated list such as `low, high, max`. Each entry becomes `{ "id": "<effort>", "settings": { "reasoningEffort": "<effort>" } }`.
+- **Reasoning field** sets `compatibility.reasoningField` when a provider streams reasoning under a non-default delta key.
+
+Nothing is derived from the model name, and the plugin does not invent efforts. `max` and similar tiers exist only when listed in **Reasoning efforts**. An upstream accepting `reasoning_effort: "max"` without an HTTP error is not proof that it applies the effort, so verify behavior before relying on it.
+
+The override values replace the corresponding discovered values, including arrays. Omit a field to keep the discovered metadata. When **Reasoning field** is left unset, OpenCode detects the streamed reasoning field itself.
+
+```jsonc
+{
+  "providers": {
+    "gateway": {
+      "models": {
+        "example-reasoning-model": {
+          "reasoning": true,
+          "variants": [
+            { "id": "low", "settings": { "reasoningEffort": "low" } },
+            { "id": "high", "settings": { "reasoningEffort": "high" } },
+            { "id": "max", "settings": { "reasoningEffort": "max" } }
+          ],
+          "compatibility": { "reasoningField": "reasoning" }
+        }
+      }
+    }
+  }
+}
+```
+
+The same fields can be set in explicit `providers.<id>.models.<model-id>` configuration; the plugin merges it over discovered and overridden values.
+
 OpenCode validates each model against its own model schema before plugins run. Use documented model fields such as `options` or `variants` for custom values; arbitrary top-level keys are removed by OpenCode and cannot be merged by this plugin. For V2, use the array form shown above; the object-shaped `variants` example is only for the V1 legacy adapter.
 
 The persisted cache stores only the filtered and enriched discovered base models. It does not store explicit `provider.<name>.models` (V1) or `providers.<name>.models` (V2) configuration, so explicit customizations are applied from the active OpenCode config on every startup. This keeps provider inventory data separate from user configuration.
